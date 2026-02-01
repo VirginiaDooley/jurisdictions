@@ -1,8 +1,11 @@
 import os
 from pathlib import Path
+import re
 import yaml
 from src.models.jurisdiction import Jurisdiction
 from openai import OpenAI
+from urllib.parse import urlparse
+
 
 OUTPUT_YAML_PATH = "tests/sample_output/jurisdictions/test/tx/local/austin_city_government_oid1-pdna3tgr-bgad-adaf-ybo5-5n2s7knw2sq3-uwritncj-khcn-35ig-xad4-wagfbefifzrs-n7pgulzv-lnkq-swk5-vto6-iplujpdgivzy-66kjtetx-vmjf-mho4-4rqd-cthyeogir5yd-46cb3ny.yaml"
 
@@ -14,38 +17,39 @@ def fetch_jurisdiction_data(jurisdiction_name: str, jurisdiction_ocdid: str, out
     Fetch website data for a jurisdiction using OpenAI's API.
     """
     prompt = f"Get the website url for {jurisdiction_name} with the OCDID:{jurisdiction_ocdid}"
-    import pdb; pdb.set_trace()
-    response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
-        messages=[{"role": "user", "content": prompt}]
+    
+    response = client.responses.create(
+        model="gpt-5.2",
+        input=prompt,
     )
 
-    # Assuming the AI returns a YAML or JSON string in message.content
-    content = response.choices[0].message.content
-    # parse content for the url
-    try:
-        content_dict = yaml.safe_load(content)
-    except Exception:
-        import json
-        content_dict = json.loads(content)
-    url = content_dict.get("url")
-    # validate the url format
-    if not is_valid_url(url):
-        raise ValueError(f"Invalid URL format: {url}")
+    print(response.output_text)
+    content = response.output_text
 
-    def is_valid_url(url: str) -> bool:
-        """
-        Simple URL validation.
-        """
-        from urllib.parse import urlparse
-        try:
-            result = urlparse(url)
-            return all([result.scheme in ("http", "https"), result.netloc])
-        except Exception:
-            return False
+    # parse the string for the url
+    # Use regex to extract the first URL from the content
+    url_match = re.search(r"https?://\S+", content)
+    if not url_match:
+        raise ValueError("No URL found in model response")
+
+    url = url_match.group(0)
+    parsed = urlparse(url)
+
+    if not all([parsed.scheme, parsed.netloc]):
+        raise ValueError(f"Invalid URL format: {url}")
+    update_yaml(output_yaml_path, url)
+
+
+def update_yaml(output_yaml_path: str, new_url: str) -> None:
+    """
+    Update the YAML file with the new URL.
+    """
+    with open(output_yaml_path, 'r') as file:
+        content_dict = yaml.safe_load(file)
 
     # update the yaml record with the new url
-    content_dict["url"] = url
+    content_dict["url"] = new_url
+
     # save the yaml
     with open(output_yaml_path, 'w') as file:
         yaml.dump(content_dict, file)
@@ -63,17 +67,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-    # Fetch data from AI
-    fetch_jurisdiction_data(jurisdiction_name, jurisdiction_ocdid)
 
-
-def is_valid_url(url: str) -> bool:
-    """
-    Validate the URL format.
-    """
-    from urllib.parse import urlparse
-    try:
-        result = urlparse(url)
-        return all([result.scheme in ("http", "https"), result.netloc])
-    except Exception:
-        return False
