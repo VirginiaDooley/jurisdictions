@@ -1,70 +1,101 @@
 import os
-from pathlib import Path
-import re
+import requests
 import yaml
-from src.models.jurisdiction import Jurisdiction
-from openai import OpenAI
+from pathlib import Path
 from urllib.parse import urlparse
+from pydantic import BaseModel, HttpUrl, field_validator
+from openai import OpenAI
 
+from src.models.jurisdiction import Jurisdiction
 
 OUTPUT_YAML_PATH = "tests/sample_output/jurisdictions/test/tx/local/austin_city_government_oid1-pdna3tgr-bgad-adaf-ybo5-5n2s7knw2sq3-uwritncj-khcn-35ig-xad4-wagfbefifzrs-n7pgulzv-lnkq-swk5-vto6-iplujpdgivzy-66kjtetx-vmjf-mho4-4rqd-cthyeogir5yd-46cb3ny.yaml"
 
-
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-def fetch_jurisdiction_data(jurisdiction_name: str, jurisdiction_ocdid: str, output_yaml_path: str = OUTPUT_YAML_PATH) -> dict:
-    """
-    Fetch website data for a jurisdiction using OpenAI's API.
-    """
-    prompt = f"Get the website url for {jurisdiction_name} with the OCDID:{jurisdiction_ocdid}"
+class AiURLResp(BaseModel):
+    url: HttpUrl
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, v):
+        if not v:
+            raise ValueError("URL must not be empty")
+        if v.scheme not in ["http", "https"]:
+            raise ValueError("URL must be a valid HTTP or HTTPS URL")
+        parsed = urlparse(str(v))
+        if not (parsed.hostname and parsed.hostname.endswith(".gov")):
+            raise ValueError("URL must be a .gov domain")
+
+        try:
+            response = requests.get(str(v))
+            response.raise_for_status()
+        except requests.RequestException as e:
+            raise ValueError(f"Error fetching URL: {e}")
+        return v
+
+
+def load_jurisdiction_from_yaml(path: str | Path) -> Jurisdiction:
+    """Load and normalize a Jurisdiction from a YAML file."""
+    path = Path(path)
+    with path.open("r", encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+        jurisdiction_data = {
+            "name": data.get("name"),
+            "ocdid": data.get("ocdid"),
+            "url": data.get("url")
+        }
+    if not jurisdiction_data["name"] or not jurisdiction_data["ocdid"]:
+        raise ValueError("Missing required fields: 'name' and 'ocdid' are required")
+
+    return jurisdiction_data
+
+def fetch_ai_jurisdiction_url(jurisdiction: Jurisdiction) -> AiURLResp:
+    jurisdiction_name = jurisdiction["name"]
+    jurisdiction_ocdid = jurisdiction["ocdid"]
     
-    response = client.responses.create(
-        model="gpt-5.2",
-        input=prompt,
-    )
+    try: 
+        prompt = (
+            f"Get the website url for {jurisdiction_name} with the OCDID:{jurisdiction_ocdid}. "
+            "Return only official government websites. Most will have .gov domains, but not all. "
+            "Where available always return the .gov domain.\n\n"
+            "Return the url as a dictionary as shown in the examples below.\n\n"
+            'Examples:\n'
+            '{"url": "https://www.sausalito.gov/"}\n'
+            '{"url": "https://www.chicago.gov/city/en.html"}\n'
+            '{"url": "https://www.westfieldnj.gov/"}\n'
+            '{"url": "PaloAlto.gov"} # not cityofpaloalto.org,\n'
+            '{"url": "https://coltsneck.org/"} # No .gov domain exists, use the official .org domain\n'
+        ) 
+        response = client.responses.create(
+            model="gpt-5.2",
+            input=prompt,
+        )
+        content = response.output_text
+    except LookupError as e:
+        raise ValueError(f"Error fetching AI jurisdiction URL: {e}")
 
     print(response.output_text)
     content = response.output_text
+    
+    import json
 
-    # parse the string for the url
-    # Use regex to extract the first URL from the content
-    url_match = re.search(r"https?://\S+", content)
-    if not url_match:
-        raise ValueError("No URL found in model response")
+    data = json.loads(content)
+    url = data["url"] 
+    try:
+        ai_url_resp = AiURLResp(url=url)
+    except Exception as e:
+        raise ValueError(f"Error checking URL status: {e}")
 
-    url = url_match.group(0)
-    parsed = urlparse(url)
-
-    if not all([parsed.scheme, parsed.netloc]):
-        raise ValueError(f"Invalid URL format: {url}")
-    update_yaml(output_yaml_path, url)
+    return ai_url_resp
 
 
-def update_yaml(output_yaml_path: str, new_url: str) -> None:
-    """
-    Update the YAML file with the new URL.
-    """
-    with open(output_yaml_path, 'r') as file:
-        content_dict = yaml.safe_load(file)
+def main() -> None:
+    jurisdiction = load_jurisdiction_from_yaml(OUTPUT_YAML_PATH)
+    print("Loaded jurisdiction:", jurisdiction["name"])
 
-    # update the yaml record with the new url
-    content_dict["url"] = new_url
+    ai_result = fetch_ai_jurisdiction_url(jurisdiction)
+    print("AI result:", ai_result.url)
 
-    # save the yaml
-    with open(output_yaml_path, 'w') as file:
-        yaml.dump(content_dict, file)
-
-def main():
-    with open(OUTPUT_YAML_PATH, 'r') as file:
-        sample_yaml_file = yaml.safe_load(file)
-
-    # get the ocdid and name from the sample YAML
-    jurisdiction_ocdid = sample_yaml_file.get("ocdid")
-    jurisdiction_name = sample_yaml_file.get("name")
-
-    # Fetch data from AI
-    jurisdiction_data = fetch_jurisdiction_data(jurisdiction_name, jurisdiction_ocdid, OUTPUT_YAML_PATH)
 
 if __name__ == "__main__":
     main()
-
