@@ -94,7 +94,8 @@ uv run python src/init_migration/main.py --state wa,tx,oh --force
 ## To Review Pull requests from forked repos, reference the pull request #:
 This if for maintainers to pull the forked pull request and review the changes locally. Local branch here refers to the name of the branch you'd like to checkout to review the changes in your local dev environment. 
 Example: 
-`git fetch origin pull/<PR_NUMBER>/head:<local-branch-name>` 
+`git fetch origin pull/38/head:create-crudl-module` 
+`git fetch origin pull/39/head:fix-update-merge-default`
 
 ## Notes
 - Use `src` package-root imports in code and tests.

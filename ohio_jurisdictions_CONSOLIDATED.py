@@ -1,11 +1,6 @@
 from datetime import datetime, timezone
 from .src.models.source import SourceObj
-from .src.models.jurisdiction import (
-    Jurisdiction,
-    TermDetail,
-    SessionDetail,
-    ClassificationEnum,
-)
+from .src.models.jurisdiction import Jurisdiction, TermDetail, SessionDetail, ClassificationEnum
 
 
 # Helper to make UTC datetimes
